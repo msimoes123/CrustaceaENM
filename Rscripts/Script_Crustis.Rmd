@@ -1,0 +1,969 @@
+---
+title: "Estimating the future shift patterns of shallow-water and deep-sea Crustacea"
+author: 'Marianna V. P. Simões, Hanieh Saeedi, Marlon E. Cobos & Angelika Brandt '
+output: 
+  pdf_document:
+    toc: yes
+    toc_depth: '4'
+  html_document:
+    toc: yes
+    toc_depth: 4
+---
+
+This file contains the R code used to perfom the pre-modeling, modeling and post-modeling of each deep-sea and shallow-water species ecological niche, included in the manuscript "Estimating the future shift patterns of shallow-water and deep-sea Crustacea" .A schematic figure of the entire modeling process can be found at the Extended Data Figure 1. 
+
+The three modeling steps include:
+
+A. Pre modeling: 1. Distribution data capture and cleaning from open-source databases (GBIF and OBIS); 2. Distribution data thinning;3. Organization of species folders; 4. Split of occcurence into train and test;5. Creation of calibration area ("M") 
+
+B. Modeling: 1. Creation of candidate models; 2. Evaluation of candidate models;  3. Selecting best model base don aic and ROC; 4. Creation of Final models; 5. Transforming final models to binary.
+
+C. Post modeling: 1. Projection changes; 2. Variance in model predictions; 3. Extrapolation analysis (MOP); 
+4. Binary MOPs;  5. Subtracting MOP from Final models (post-MOP models); 6. Calculating centroid shift; 7. MOPs summary 
+ 
+
+Most of analysis used the kuenm R package, to which a brief tutorial can be found in the "https://github.com/marlonecobos/kuenm" . There, you can also find instructions for the directory structure, necessary data and additional software for its installation. 
+
+## Pre-modeling: 
+
+The pre- modeling phase includes steps on the preparation of occurence data and environemntal data for the creation of ecological niche models. It includes: 
+
+1. Distribution data capture and cleaning from open-source databases (GBIF and OBIS); 
+2. Distribution data thinning;
+3. Oragnization of species folders;
+4. Split of occcurence into train and test;
+5. Creation of calibration area ("M") 
+
+### Distribution data:
+
+Distribution data were based on four deep-sea expeditions to the NW Pacific including the Sea of Japan Biodiversity Study (SoJaBio; 2010) (Malyutina & Brandt 2013), Kuril-Kamchatka Biodiversity Study (KuramBio I and II; 2012 - 2016) (Brandt & Malyutina 2015), and the Sea of Okhotsk Biodiversity Study (SokhoBio; 2015)  (Malyutina et al. 2018). The beneficial project assembled these datasets The list of species created based on the cited databses, was used to extract data on the Ocean Biogeographic Information System (OBIS) (www.iobis.org) and Global Biodiversity Information System (GBIF).To classify the species according to the depth, we used the maximum depth associated with records in the used databases. 
+
+Occurence records were manually checked for suitability,  dubious records were corrected following protocol in Cobos et al. (2018).All species names were matched against the World Register of Marine Species (WoRMS) and synonyms reconciled (www.marinespecies.org). Finally, species were categorized into two groups: shallow-water (0-500m) and deep-sea (>500m), following classification by the World Register of Deep-Sea Species (WoRDSS). 
+
+### Data capture: Obtaining occourence data from Ocean Biogeographic Information System (OBIS)
+
+```{r, eval=FALSE}
+sp <- read.csv("List of Crustacean Species.csv", stringsAsFactors = FALSE)
+dim(sp)
+name <- sp$ScientificName
+
+spdata <- lapply(names, function(name) {
+  
+  message(name)
+  
+  return(robis::occurrence(name))
+  
+})
+
+data <- dplyr::bind_rows(spdata)
+
+```
+
+### Data capture: Obtaining occourence data from Global Biodiversity Information System (GBIF). 
+
+```{r, eval=FALSE}
+
+spvector <- as.character(read.csv("List of Crustacean species.csv")[, 1])# binomial names
+
+## Getting info species by species 
+occ_count <- list() # object to save info on number of georeferenced records per species 
+
+for (i in 1:length(spvector)) {
+  sps <- try(name_lookup(query = spvector[i], rank = "species", 
+                         return = "data", limit = 100), silent = TRUE) # information 
+  #about the species
+  
+  sps_class <- class(sps)
+  
+  # avoiding errors from GBIF (e.g., species name not in GBIF)
+  if(sps_class[1] == "try-error") {
+    occ_count[[i]] <- c(Species = spvector[i], keys = 0, counts = 0) # species not in GBIF
+    cat("species", spvector[i], "is not in the GBIF database\n")
+    
+  }else {
+    keys <- sps$key # all keys returned
+    counts <- vector() # object to save info on number of records per key
+    
+    for (j in 1:length(keys)) { # testing if keys return records
+      counts[j] <- occ_count(taxonKey = keys[j], georeferenced = TRUE) 
+    }
+    
+    if (sum(counts) == 0) { # if no info, tell the species
+      occ_count[[i]] <- c(Species = spvector[i], keys = "all", counts = 0) # species not in GBIF
+      cat("species", spvector[i], "has no goereferenced data\n")
+      
+    }else { # if it has info, use the key with more records, which is the most useful
+      if (length(keys) == 1) { # if it is only one key
+        key <- keys # detecting species key 
+        occ_count[[i]] <- cbind(spvector[i], counts) # count how many records
+        
+      }else { # if its more than one key
+        keysco <- cbind(keys, counts)
+        keysco <- keysco[order(keysco[, 2]), ]
+        key <- keysco[dim(keysco)[1], 1] # detecting species key that return information
+        occ_count[[i]] <- c(Species = spvector[i], keysco[dim(keysco)[1], ])# count how many records
+      }
+      # getting the data from GBIF
+      occ <- try(occ_search(taxonKey = key, return = "data", limit = 10000), silent = TRUE) 
+      occ_class <- class(occ)
+      
+      # avoiding errors from GBIF
+      while (occ_class[1] == "try-error") {
+        occ <- try(occ_search(taxonKey = key, return = "data", limit = 10000), silent = TRUE) 
+        occ_class <- class(occ)
+        
+        if(occ_class[1] != "try-error") {
+          break()
+        }
+      }
+      
+      # following steps
+      occ_g <- occ
+      occ_g <- occ_g[, c(1, 2, 4, 3, 5:dim(occ_g)[2])] # reordering longitude and latitude
+      
+      # keeping only unique georeferenced records. 
+      # excluding no georeferences
+       # excluding duplicates
+      occ_g <- occ_g[!is.na(occ_g$decimalLatitude) & !is.na(occ_g$decimalLongitude), ] 
+      occ_g <- occ_g[!duplicated(paste(occ_g$name, occ_g$decimalLatitude,
+                                       occ_g$decimalLongitude, sep = "_")), ]
+      
+      # writting file
+      # csv file name per each species
+      file_name <- paste(gsub(" ", "_", spvector[i]), "csv", sep = ".") 
+      write.csv(occ_g, file_name, row.names = FALSE) # writing inside each genus folder
+      
+      cat(i, "of", length(spvector), "species\n") # counting species per genus 
+    }
+  }
+}
+
+genus_data <- do.call(rbind, occ_count) # making the list of countings a table
+# making countings numeric
+genus_data <- data.frame(genus_data[, 1], genus_data[, 2], as.numeric(genus_data[, 3])) 
+names(genus_data) <- c("Species", "Key", "N_records") # naming columns
+
+# writing the table
+file_nam <- "Species_record_count.csv" # csv file name for all species
+write.csv(genus_data, file_nam, row.names = FALSE) # writing inside each genus folder
+ 
+```
+
+### Distribution thinning: 
+
+To avoid excessive clustering within any particular region, and to attain a uniform distribution of occurrences across the species’ known distribution, we explored different filtering distances in sequential steps with the package ‘spThin’ (Aiello-Lammens et al., 2015). Once a satisfactory distribution of occurrence data was obtained (i.e., when spatial clustering of records was no longer evident), we split the occurrences randomly in equal halves: one set of locations for calibration and another for evaluation during model calibration. Species with at least 30 records were retained and error-checked to meet appropriate standards for ecological niche modeling. 
+
+```{r, eval=FALSE}
+
+spvec <- dir()
+exclude <- c("Variables", "G_variables")
+spvector <- spvec[!spvec %in% exclude]
+
+final_occ <- list()
+
+for (i in 1:length(spvector)) {
+  # reading species data
+  sp <- read.csv(paste(spvector[i], "/", paste(spvector[i], ".csv", sep = ""), sep = ""))
+  sp_nodup <- unique(sp)
+  
+  if (dim(sp_nodup)[1] > 1000) {
+    sp_nodup <- sp_nodup[sample(1:nrow(sp_nodup), 1000), ]
+  }
+  
+  # thinning
+  thinnedcat_a <- thin( loc.data = sp_nodup, lat.col = "decimalLatitude", 
+                        long.col = "decimalLongitude", 
+                        spec.col = "species", thin.par = 10, reps = 5, 
+                        locs.thinned.list.return = TRUE, write.files = FALSE, 
+                        max.files = 1, out.dir = spvector[i], 
+                        out.base = "cat_a_thined", write.log.file = FALSE )
+  
+  thin <- cbind(as.character(sp_nodup[1, 1]), thinnedcat_a[[5]])
+  colnames(thin) <- colnames(sp_nodup)
+  
+  write.csv(thin, paste0(spvector[i], "/", paste0(spvector[i], "_thin.csv")),
+            row.names = FALSE)
+  
+  # training and testing split
+  thin$check <- paste(thin[,2], thin[,3], sep = "_") # column to make the split
+  train <- thin[sample(nrow(thin), round((length(thin[,1]) / 4 * 3))), ] # training data
+  test <- thin[!thin[,4] %in% train[,4],] # testing data
+  
+  thin$check <- NULL # deleting column to make splits
+  train$check <- NULL
+  test$check <- NULL
+  # writing files (change names as needed)
+  write.csv(thin, paste0(spvector[i], "/", paste0(spvector[i], "_joint.csv")),
+            row.names = FALSE) 
+  write.csv(train, paste0(spvector[i], "/", paste0(spvector[i], "_train.csv")),
+            row.names = FALSE)
+  write.csv(test, paste0(spvector[i], "/", paste0(spvector[i], "_test.csv")),
+            row.names = FALSE)
+  
+  # number of final records per species
+  final_occ[[i]] <- data.frame(species = spvector[i], n_records = dim(thin)[1])
+  
+  cat("\nSpecies", i, "of", length(spvector), "finished\n")
+}
+
+# writing summary of species number of records
+final_n <- do.call(rbind, final_occ)
+write.csv(final_n, "summary_occ_n.csv", row.names = FALSE)
+
+
+```
+
+
+### Organization of species folders
+
+```{r, eval=FALSE}
+x <- read.csv('CSV with all occurences for all species')
+sp <- unique(x$Species) #str(sp)
+
+n = 30 #number of records 
+cols = 2:4 # columns extracted from dataset - species, long, lat
+for (i in 1:length(sp)) {
+  sptable <- x[x$Species == sp[i], cols]
+  if (dim(sptable)[1] >= n) {
+    dir.create(paste(sp[i], collapse = "_"))
+    write.csv(sptable, paste(paste(sp[i], collapse = '_'), '\\',
+                             paste(sp[i], collapse = '_'), ".csv", sep = ""), row.names = FALSE)
+  }
+  
+}
+
+
+
+```
+
+### Split of occcurence into train and test
+
+Once a satisfactory distribution of occurrence data was obtained (i.e., when spatial clustering of records was no longer evident), we split the occurrences randomly in equal halves: one set of locations for calibration and another for evaluation during model calibration
+
+```{r, eval=FALSE}
+
+spvec <- dir()
+exclude <- c("Variables", "G_variables")
+
+for (i in 1:length(spvector)) {
+  all <- read.csv(paste(spvector[i], "/", paste(spvector[i], ".csv", sep = ""), sep = ""))
+  all <- unique(all)
+  
+  
+  all$check <- paste(all[,2], all[,3], sep = "_")
+  train <- all[sample(nrow(all), round((length(all[,1])/4 *3))), ]
+  test <- all[!all[,4] %in% train[,4], ]
+  
+  all$check <- NULL
+  train$check <- NULL
+  test$check <- NULL
+  
+  write.csv(all, paste(spvector[i], "/", paste(spvector[i], "_joint.csv", sep = ""), 
+                       sep = ""), row.names = FALSE)
+  write.csv(train, paste(spvector[i], "/", paste(spvector[i], "_train.csv", sep = ""),
+                         sep = ""), row.names = FALSE)
+  write.csv(test, paste(spvector[i], "/", paste(spvector[i], "_test.csv", sep = ""),
+                        sep = ""), row.names = FALSE)
+}
+
+```
+ 
+### Creation of calibration area ("M")
+
+Calibration areas included a buffer of 2 decimal degrees from the occurrences of each species (‘M’; Barve et al., 2011)
+
+```{r, eval=FALSE}
+
+spvec <- dir()
+exclude <- c("Variables", "G_variables")
+spvector <- spvec[!spvec %in% exclude]
+
+scenarios <- c("present")
+
+var_list <- list(stack(list.files("Variables/set1/present", pattern = ".asc",
+                                  full.names = TRUE)), 
+                 stack(list.files("Variables/set2/present", pattern = ".asc", 
+                                  full.names = TRUE)))
+
+var_names <- list(list.files("Variables/set1/present", pattern = ".asc",
+                             full.names = FALSE),
+                  list.files("Variables/set2/present", pattern = ".asc",
+                             full.names = FALSE))
+
+sets <- c("set1", "set2")
+
+
+for (i in 1:length(spvector)) {
+  # reading species data
+  sp <- read.csv(paste(spvector[i], "/", paste(spvector[i], ".csv", sep = ""), 
+                       sep = ""))
+  sp_nodup <- unique(sp)
+  
+  # create buffer
+  WGS84 <- sp::CRS("+proj=longlat +datum=WGS84 +ellps=WGS84 +towgs84=0,0,0")
+  occ_pr <- sp::SpatialPointsDataFrame(coords = sp_nodup[, 2:3], data = sp_nodup,
+                                       proj4string = WGS84)
+  
+  buff_area <- rgeos::gBuffer(occ_pr, width = 2)
+  #buff_areap <- raster::disaggregate(buff_area)
+  
+  # folder for Ms
+  dir.create(paste(spvector[i], "M_variables", sep = "/"))
+  
+  for (j in 1:length(var_list)) {
+    set <- var_list[[j]]
+    
+    # folder for sets
+    infolder <- paste(spvector[i], "M_variables", sets[j], sep = "/")
+    dir.create(infolder)
+    
+    # mask variables
+    masked <- mask(crop(set, buff_area), buff_area)
+    
+    # write variables
+    for (k in 1:length(unstack(masked))) {
+      writeRaster(masked[[k]], filename = paste(infolder, var_names[[j]][k],
+                                                sep = "/"), format = "ascii")
+    }
+    cat("   Set", j, "of", length(var_list), "finished\n")
+  }
+  
+  cat("Species", i, "of", length(spvector), "finished\n")
+}
+
+
+```
+
+
+## Modeling 
+
+The modeling phase includes:
+
+1. Creation of candidate models; 
+2. Evaluation of candidate models;
+3. Selecting best model base don aic and ROC;
+4. Creation of Final models;
+5. Transforming final models to binary.
+ 
+ 
+ The creation of candidate models (kuenm_cal) concerns the creation of a set of  models that test a broad suites of parameter combinations, such as, distinct regularization multiplier values, various feature classes, and different sets of environmental variables. In this study we tested  126 candidate models per each species, with parameterizations resulted from the combinations of nine regularization multipliers (0.1–1.0 at intervals of 0.2, 2–5 at intervals of 1), seven feature classes representing combinations of linear, quadratic and product, two distinct sets of variables (without topography, ‘set 1’ and including topography, ‘set 2’), with projections created allowing extrapolation and clamping.  
+ Following this step we evaluated the models (kuenm_ceval), to select candidate models and their associated parameters to identify the best models based on three distinct criteria: statistical significance (based on partial ROC analyses), prediction ability (we use omission rates, but other metrics, such as overall correct classification rate, can also be used), and model complexity (here evaluated using AICc).
+ Selected model parameterizations were the ones that resulted in significant models (partial ROC with E = 5%, 500 iterations, and 50 percent of data for bootstrapping; Peterson et al. 2008), that had omission rates lower than a previously defined error rate (E = 5%, Anderson et al 2003), and the lowest AICc value per each species (Warren et al. 2010), in that order. 
+ Then, after selecting parametrizations that produce best models, we created final models (kuenm_mod) for the present and globally projected to 2050 and 2100 for two representative concentration pathway emission scenarios (RCP 26 and 85). 
+
+### Candidate models: creation and eveluation
+
+```{r, eval=FALSE}
+
+spvec <- dir()
+exclude <- c("Variables", "G_variables")
+spvector <- spvec[!spvec %in% exclude]
+sp1 <- spvector
+
+# occurrences
+occ_joint <- paste(sp1, "/", paste(sp1, "_joint.csv", sep = ""), sep = "")
+occ_tra <- paste(sp1, "/", paste(sp1, "_train.csv", sep = ""), sep = "")
+occ_test <- paste(sp1, "/", paste(sp1, "_test.csv", sep = ""), sep = "")
+
+# variables
+M_var_dir <- paste(sp1, "/", "M_variables", sep = "")# Calibration area of each species
+G_var_dir <- "G_variables" #projection area for all species
+
+# maxent argument
+batch_cal <- paste(sp1, "/", "Candidate_models1", sep = "")
+out_dir <- paste(sp1, "/", "Candidate_Models1", sep = "")
+reg_mult <- c(seq(0.5, 1, 0.5), seq(2, 2, 1))
+f_clas <- "no.t.h"
+background <- 10000
+maxent_path <- "C:\\Maxent"
+wait <- TRUE
+run <- TRUE
+out_eval <- paste(sp1, "/", "Calibration_results1", sep = "")
+threshold <- 5
+rand_percent <- 50
+iterations <- 500
+kept <- FALSE
+selection <- "OR_AICc"
+paral_proc <- FALSE
+batch_fin <- paste(sp1, "/", "Final_models", sep = "")
+mod_dir <- paste(sp1, "/", "Final_Models", sep = "")
+rep_n <- 10
+rep_type <- "Bootstrap"
+jackknife <- FALSE
+out_format <- "logistic"
+project <- TRUE
+ext_type <- "ext_clam"
+write_mess <- TRUE
+write_clamp <- FALSE
+args <- NULL
+
+# Creation of candidate models, evaluation of candidate models and final models
+for (i in 1:length(occ_joint)) {
+  # create candidate models
+   kuenm_cal(occ.joint = occ_joint[i], occ.tra = occ_tra[i],
+             M.var.dir = M_var_dir[i], batch = batch_cal[i],
+             out.dir = out_dir[i], reg.mult = reg_mult, f.clas = f_clas,
+             background = background,maxent.path = maxent_path,
+             wait = wait, run = run)
+  # evaluate all candidate models and select the best based 
+  #on pROC, Omission rate and complexity AICc
+  kuenm_ceval(path = out_dir[i], occ.joint = occ_joint[i], 
+              occ.tra = occ_tra[i], occ.test = occ_test[i],
+              batch = batch_cal[i], out.eval = out_eval[i], threshold = threshold,
+              rand.percent = rand_percent, iterations = iterations, kept = kept,
+            selection = selection, parallel.proc = paral_proc)
+}
+```
+
+### Selecting best model parameters
+
+```{r, eval=FALSE}
+
+deep <- dir(pattern = "Done$", full.names = TRUE)
+deep <- deep[2]
+
+for (i in 1:length(deep)) {
+  spvec <- dir(path = deep[i], full.names = TRUE)
+  bar <- dir(path = deep[i], pattern= 'Variables', full.names = TRUE)
+  g_var <- dir(path = deep[i], pattern= 'G_variables', full.names = TRUE)           
+  extra <- dir(path = deep[i], pattern= 'Calibration', full.names = TRUE)  
+  exclude <- c(bar, g_var, extra)
+  spvector <- spvec[!spvec %in% exclude]
+  
+  for (j in 1:length(spvector)) {
+    best <- list.files(path = paste(spvector[j], "Calibration_results1", sep = "/"),
+                       pattern = "best", full.names = TRUE)
+    bestr <- read.csv(best)
+    
+    file.rename(best, paste(spvector[j], "Calibration_results1", 
+                            "tseb_candidate_models_OR_AICc.csv", sep = "/"))
+    
+    bestr <- bestr[bestr[, 6] == 0, ]
+    
+    if (dim(bestr)[2] > 1) {
+      models <- bestr[, 1]
+      
+      sn <- ".*set2"
+      stn <- gregexpr(sn, models)
+      stan <- regmatches(models, stn)
+      statn <- unlist(stan)
+      
+      if (length(statn) > 0) {
+        bestb <- bestr[bestr[, 1] == statn, ][1, ]
+      }else {
+        bestb <- bestr[1, ]
+      }
+    }else {
+      bestb <- bestr
+    }
+    
+    write.csv(bestb, file = best, row.names = FALSE)
+    cat("   species", j, "of", length(spvector),'\n')
+  }
+  
+  cat("group", i, "of", length(deep),'\n')
+}
+
+```
+
+### Creation of Final models
+
+```{r, eval=FALSE}
+
+for (i in 1:length(occ_joint)) {
+   # create final models using the parameterizations selected before
+   kuenm_mod(occ.joint = occ_joint[i], M.var.dir = M_var_dir[i], 
+             out.eval = out_eval[i], batch = batch_fin[i],
+             rep.n = rep_n, rep.type = rep_type, jackknife = jackknife,
+             out.dir = mod_dir[i],out.format = out_format, 
+             project = project, G.var.dir = G_var_dir, ext.type = ext_type,
+             write.mess = write_mess, write.clamp = write_clamp, 
+             maxent.path = maxent_path, args = args, wait = wait, run = run)
+  cat("\n\nAnalyses for species", i, "of", length(occ_joint), "finished\n")
+}
+
+```
+
+### Final Model threshold
+
+```{r, eval=FALSE}
+
+spvec <- dir()
+exclude <- c("Variables", "G_variables")
+spvector <- spvec[!spvec %in% exclude]
+sp1 <- spvector[1:20] 
+sp2 <- gsub(" ", "_", sp1)
+
+sp_name <- sp2
+fmod_dir <- paste(sp1, "Final_Models", sep = '/')
+format <- "asc"
+project <- TRUE
+stats <- c("med", "range")
+rep <- TRUE
+scenarios <- c("present", "2050_rcp26", "2050_rcp85", "2100_rcp26", "2100_rcp85")
+ext_type <- c("EC") 
+out_dir <- paste(sp1, "Final_Model_Stats", sep = '/')
+occ <- paste(sp1, paste(sp1, "joint.csv", sep = '_'), sep = "/")
+thres <- 5
+curr <- "present"
+emi_scenarios <- c("rcp26", "rcp85")
+t_periods <- c("2050", "2100")
+out_dir1 <-  paste(sp1, "Projection_Changes", sep = '/')
+split <- 200 
+out_dir2 <- paste(sp1, "Variation_from_sources", sep = '/')
+i=1
+for (i in 1:length(sp1)) {
+  if(i != 1)    {
+     kuenm_modstats(sp.name = sp_name[i], fmod.dir = fmod_dir[i], 
+                    format = format, project = project, statistics = stats,
+                    replicated = rep, proj.scenarios = scenarios, 
+                   ext.type = ext_type, out.dir = out_dir[i]) 
+      }
+}
+```
+
+
+## Post-modeling 
+The post-modeling phase includes: 
+
+ 1. Projection changes; 
+ 2. Variance in model predictions;
+ 3. Extrapolation analysis (MOP); 
+ 4. Binary MOPs; 
+ 5. Subtracting MOP from Final models (post-MOP models);
+ 6. Calculating centroid shift
+ 
+ After iobtaining the final models, we performed map algebra to represent how and where models projected in time change compared to the current one (kuenm_projchanges).Moreover, we model variation was assessed and represented geographically following the amount of variance in model predictions that came from replicates and emission scenarios (RCPs). 
+ 
+ To assess the risks of strict extrapolation, we used the mobility-oriented parity metric (MOP; Owens et al. 2013), which consists of measuring similarity between the closest 5% of the environmental conditions of M to each environmental condition in the area of transference.  Areas with higher extrapolative values indicate higher uncertainty; and caution is required when interpreting likelihood of species presence in such areas (Alkishe et al. 2017). 
+ Then, we threshold MOP results, considering only areas with zero similarity as strict extrapolation, and masked areas of extrapolation from binary final models, using binary MOPs, creating final binary models with no extrapolation (post-MOP projections). 
+ 
+ 
+### Projection changes
+
+```{r, eval=FALSE}
+ for (i in 1:length(sp1)) {
+    kuenm_projchanges(occ = occ[i], fmod.stats = out_dir[i], threshold = thres, 
+                      current = curr, emi.scenarios = emi_scenarios,  
+                      time.periods = t_periods, ext.type = ext_type, 
+                      out.dir = out_dir1[i])
+    
+      cat("\n\nAnalyses for species", i, "of", length(sp1), "finished\n")
+ }
+
+```
+### Variance in model predictions
+
+```{r, eval=FALSE}
+ for (i in 1:length(sp1)) {
+        kuenm_modvar(sp.name = sp_name[i], fmod.dir = fmod_dir[i], 
+                     replicated = rep, format = format, project = project,
+                     current = curr, emi.scenarios = emi_scenarios, 
+                     time.periods = t_periods, ext.type = ext_type, 
+                     split.length = split, out.dir = out_dir2[i])
+    
+    cat("\n\nAnalyses for species", i, "of", length(sp1), "finished\n")
+ }
+
+```
+ 
+### MOP analysis
+
+```{r, eval=FALSE}
+percent <- 3 
+paral <- FALSE 
+comp_each <- 3000 
+
+for (i in 1) {
+  spvec <- dir(path = deep[i], full.names = TRUE)
+  exclude <- paste(deep[i], c("Variables", "G_variables"), sep = "/")
+  spvector <- spvec[!spvec %in% exclude]
+  
+  G_var_dir <- paste(deep[i], "G_variables", sep = "/")
+  
+  for (j in 101:length(spvector)) {
+    sets <- list.files(path = paste(spvector[j], "Calibration_results1", sep = "/"),
+                       pattern = "best", full.names = TRUE)
+    sets_var <- as.character(read.csv(sets)[1, 1])
+    
+    sets_var <- gsub("^M.*_", "", sets_var)
+    M_var_dir <- paste(spvector[j], "M_variables", sep = "/")
+    out_mop <- paste(spvector[j], "MOP_results", sep = "/")
+    
+    kuenm_mmop(G.var.dir = G_var_dir, M.var.dir = M_var_dir, 
+               sets.var = sets_var, out.mop = out_mop,
+               percent = percent, parallel = paral, 
+               comp.each = comp_each)
+    
+    cat("   species", j, "of", length(spvector), "==========\n")
+  }
+  
+  cat("group", i, "of", length(deep), "======================\n")
+}
+
+```
+
+### Transforming MOPs into binary
+```{r, eval=FALSE}
+#MOP Processing and Percentage of area -------------------
+
+setwd('D://MOPS_Ready//arctic_shallow')
+dir()
+##MOPs
+mops <- "MOP_\\d\\S*.tif$"
+set <- "set\\d"
+
+files <- list.files(pattern = mops, full.names = T, recursive = T) #list MOPS
+files
+
+new_files <- gsub("MOP_results", "MOP_results_bin", files)
+new_files <- gsub(".tif$", "_bin.tif", new_files)
+new_files
+
+SET <- gsub(mops, "", new_files)
+MAIN <- gsub(paste0(set, "/", mops), "", new_files)  #Mop binary names
+
+##Binary
+setwd('D:\\MODELS_Ready\\arctic_shallow')
+sps <- dir()
+exclude <- c("Variables", "G_variables")  #exclude g_variables and variables
+sps <- sps[!sps %in% exclude]
+
+bins <- "binary.*if$"
+
+bin_files <- list.files(pattern = bins, full.names = T, recursive = T)
+bin_files
+
+bins_exc <- "binary_c.*on.tif$"
+bin_files_exc <- list.files(pattern = bins_exc, full.names = T, recursive = T)
+bin_files <- bin_files[!bin_files %in% bin_files_exc]
+
+ex <- seq(2, 360, 2) 
+ne <- seq(8, 360, 8)
+
+exs <- ex[!ex %in% ne]
+bin_files <- bin_files[-exs]
+
+new_bins <- gsub("Pro.*", 'Reduced_binary/', bin_files)
+new_bins <- gsub(".tif$", "_bin.tif", new_bins)
+new_bins
+
+pat <- '.*%_'
+name <- gsub(pat, '', new_files)
+new_bins <- paste0(new_bins, name)
+
+MAIN1 <- paste0(sps, "/", "Reduced_binary")
+SCEN <- paste0(MAIN1, rep(c("/rcp_26", "/rcp_85"), length(MAIN1)))
+
+results <- list()
+
+for (i in 106:length(new_files)) {
+  setwd("D:\\MOPS_Ready\\arctic_shallow")
+  mop <- raster(files[i])
+  setwd('D:\\MODELS_Ready\\arctic_shallow')
+  bin <- raster(bin_files[i])
+  
+  mop <- mop > 0 # strict extrapolation
+  #dir.create(MAIN[i]) #creating folder to save binary version of MOPS - MOP_results_bin
+  #dir.create(SET[i])
+  writeRaster(mop, filename = new_files[i], format = "GTiff", overwrite=TRUE)
+  
+  
+  bin1 <- bin * mop
+  #creating folder to save reduced version of MOPs - MOP - BINARY PREDIC
+  dir.create(MAIN1[i])
+  #dir.create(SCEN[i])
+  writeRaster(bin1, filename = new_bins[i], format = "GTiff", overwrite=TRUE)
+  
+  
+  # before
+  vals <- na.omit(values(bin))
+  uval <- sort(unique(vals))
+  
+  ## processing
+  all <- length(vals)
+  percents <- sapply(1:length(uval), function(x) {
+    per <- round(sum(vals == uval[x]) * 100 / all, 2)
+    return(per)
+  })
+  names(percents) <- uval
+  
+  # after
+  vals <- na.omit(values(bin1))
+  uval <- sort(unique(vals))
+  
+  ## processing
+  all <- length(vals)
+  percents1 <- sapply(1:length(uval), function(x) {
+    per <- round(sum(vals == uval[x]) * 100 / all, 2)
+    return(per)
+  })
+  names(percents1) <- uval
+  
+  results[[i]] <- list(before = percents, after = percents1)
+  
+  cat(i, "of", length(new_files), "\n")
+}
+
+names(results) <- new_bins
+
+77m[[1]]$`before`
+
+#cbind all befores 
+#cbind afters 
+
+library(plyr) 
+df <- do.call("rbind", lapply(results, as.data.frame)) 
+write.csv(df, file = "results_104.csv")
+
+```
+
+
+###  Calculating centroid shift
+
+```{r, eval=FALSE}
+
+#Calling New Binary (Binary - MOP)
+
+devtools::install_github("marlonecobos/ellipsenm")
+library(ellipsenm)
+library(raster)
+
+setwd('D:\\MODELS_Ready\\nw_arctic_deep')
+sps <- dir()
+exclude <- c("Variables", "G_variables")  #exclude g_variables and variables
+sps <- sps[!sps %in% exclude]
+
+var_list <- list(stack(list.files("D:/nw_shallow/Variables/set1/present",
+                                  pattern = ".asc", full.names = TRUE)))
+
+vars <- raster::stack(list.files("D:/nw_shallow/Variables/set1/present",
+                                 pattern = ".asc", full.names = TRUE))
+
+#Binary models - MOPS - future ones 
+fut_new_bin <- list.files(pattern = '^2.*bin.tif$', full.names = T, recursive = T) 
+fut_new_bin
+#Binary models - MOPS - future ones 
+fut_new_bin_ex <- list.files(pattern = '^2.*bin.tif2.*bin.tif$', full.names = T, recursive = T) 
+fut_new_bin <- fut_new_bin[!fut_new_bin %in% fut_new_bin_ex]
+
+#ex <- seq(1, 455, 2) #change the middle number for the number of "bin_files"
+#ne <- seq(2, 455, 2)
+
+#exs <- ex[!ex %in% ne]
+#fut_new_bin <- fut_new_bin[-exs]
+#fut_new_bin <- fut_new_bin[-231]
+#fut_new_bin <- fut_new_bin[-232]
+
+#Binary models - MOPS - Present ones
+pres_new_bin <- list.files(pattern = '^present_bin.tif$', full.names = T, recursive = T)  
+pres_new_bin
+
+sp_occ <- list.files(pattern = 'joint.csv$', full.names = T, recursive = T)
+sp_occ
+
+pres_centroid <- list()
+fut_centroid <- list()
+
+for (i in 1:length(pres_new_bin)) {
+  
+  sp1 <- read.csv(sp_occ[i])
+  sub1 <- subset(sp1, sp1$decimalLongitude < -180, sp1$decimalLongitude > 180) 
+  sub2 <- subset(sp1, sp1$decimalLatitude < -90, sp1$decimalLatitude > 90) 
+  sp2 <- sp1[ !(sp1 %in% sub1), ]
+  sp <- sp2[ !(sp2 %in% sub2), ]
+  
+  pol <- concave_area(data = sp, longitude = "decimalLongitude", latitude = "decimalLatitude", 
+                      length_threshold = 25, buffer_distance = 200)
+  
+  pres <- raster::raster(pres_new_bin[i])
+  pres <- raster::mask(crop(pres,pol), pol)
+  pres[pres[] == 0] <- NA
+  pres_centroid[[i]] <- colMeans(xyFromCell(pres, which(pres[] == 1)))
+  cents <- list()
+  dist <- vector()
+  NS <- vector()
+  
+  ifut <- ifelse(i == 1, 1, ((i - 1) * 4 + 1))
+  lfut <- i * 4
+  
+  f_new_bin <- fut_new_bin[ifut:lfut]
+  
+  for (j in 1:length(f_new_bin)) {
+    
+    fut <- raster::raster(f_new_bin[j]) #calling present raster and transforming to poly
+    fut <- raster::mask(crop(fut, pol), pol)
+    fut[fut[] == 0] <- NA
+    cents[[j]] <- colMeans(xyFromCell(fut, which(fut[] == 1)))
+    
+    #Distance from centroids
+    
+    dist[j] <-  pointDistance(pres_centroid[[i]], cents[[j]], lonlat=T)/1000 #distance in Km
+    NS[j] <- ifelse(pres_centroid[[i]][2] > cents[[j]][2], 'South', 'North')
+    
+  }
+  
+  fut_centroid[[i]] <- data.frame(paste0(pres_new_bin[i], f_new_bin), 
+                                  matrix(pres_centroid[[i]], nrow = 1), 
+                                  do.call(rbind, cents), dist, NS)
+  cat(i, 'of', length(pres_new_bin), '\n')
+}
+
+result <- do.call(rbind, fut_centroid)
+```
+
+###  MOP analysis summary
+
+```{r, eval=FALSE}
+library(raster)
+setwd("D:/Black_HD/MOPS_Ready")
+
+#####
+# Changes in continuous suitabilities
+### Deep
+dir(pattern = "deep")
+
+dirs <- c("arctic_deep", "nw_arctic_deep", "nw_deep") # are these all?
+
+cont <- list()
+for (i in 1:length(dirs)) {
+  cont[[i]] <- list.files(path = dirs[i], pattern = "MOP.*tif$", 
+                          full.names = TRUE, recursive = TRUE)
+}
+
+cont <- unlist(cont)
+
+ncl <- gregexpr(".*2050.*26.*", cont); ncla <- regmatches(cont, ncl); y50_r26 <- unlist(ncla)
+ncl <- gregexpr(".*2050.*85.*", cont); ncla <- regmatches(cont, ncl); y50_r85 <- unlist(ncla)
+ncl <- gregexpr(".*2100.*26.*", cont); ncla <- regmatches(cont, ncl); y100_r26 <- unlist(ncla)
+ncl <- gregexpr(".*2100.*85.*", cont); ncla <- regmatches(cont, ncl); y100_r85 <- unlist(ncla)
+ncl <- gregexpr(".*present.*", cont); ncla <- regmatches(cont, ncl); present <- unlist(ncla)
+
+c5026 <- raster(y50_r26[1]) == 0
+c5085 <- raster(y50_r85[1]) == 0
+c10026 <- raster(y100_r26[1]) == 0
+c10085 <- raster(y100_r85[1]) == 0
+cpresent <- raster(present[1]) == 0
+
+for (j in 1:(length(y50_r26) - 1)) {
+  c5026 <- c5026 + (raster(y50_r26[j + 1]) == 0)
+  c5085 <- c5085 + (raster(y50_r85[j + 1]) == 0)
+  c10026 <- c10026 + (raster(y100_r26[j + 1]) == 0)
+  c10085 <- c10085 + (raster(y100_r85[j + 1]) == 0)
+  cpresent <- cpresent + (raster(present[j + 1]) == 0)
+  cat("\tsum", j, "of", (length(y50_r26) - 1), "\n")
+}
+
+#c5026 <- c5026 / length(y50_r26)
+#c5085 <- c5085 / length(y50_r26)
+#c10026 <- c10026 / length(y50_r26)
+#c10085 <- c10085 / length(y50_r26)
+#cpresent <- cpresent / length(y50_r26)
+
+dir.create("MOP_sum")
+
+writeRaster(c5026, filename = "MOP_sum/sum_deep_MOP_5026.tif", format = "GTiff")
+writeRaster(c5085, filename = "MOP_sum/sum_deep_MOP_5085.tif", format = "GTiff")
+writeRaster(c10026, filename = "MOP_sum/sum_deep_MOP_10026.tif", format = "GTiff")
+writeRaster(c10085, filename = "MOP_sum/sum_deep_MOP_10085.tif", format = "GTiff")
+writeRaster(cpresent, filename = "MOP_sum/sum_deep_MOP_present.tif", format = "GTiff")
+
+
+### Shallow
+dir(pattern = "shallow")
+
+dirs <- c("arctic_shallow", "nw_arctic_shallow", "nw_shallow") # are these all?
+
+
+cont <- list()
+for (i in 1:length(dirs)) {
+  cont[[i]] <- list.files(path = dirs[i], pattern = "MOP.*tif$", full.names = TRUE, 
+                          recursive = TRUE)
+}
+
+cont <- unlist(cont)
+
+ncl <- gregexpr(".*2050.*26.*", cont); ncla <- regmatches(cont, ncl); y50_r26 <- unlist(ncla)
+ncl <- gregexpr(".*2050.*85.*", cont); ncla <- regmatches(cont, ncl); y50_r85 <- unlist(ncla)
+ncl <- gregexpr(".*2100.*26.*", cont); ncla <- regmatches(cont, ncl); y100_r26 <- unlist(ncla)
+ncl <- gregexpr(".*2100.*85.*", cont); ncla <- regmatches(cont, ncl); y100_r85 <- unlist(ncla)
+ncl <- gregexpr(".*present.*", cont); ncla <- regmatches(cont, ncl); present <- unlist(ncla)
+
+c5026 <- raster(y50_r26[1]) == 0
+c5085 <- raster(y50_r85[1]) == 0
+c10026 <- raster(y100_r26[1]) == 0
+c10085 <- raster(y100_r85[1]) == 0
+cpresent <- raster(present[1]) == 0
+
+for (j in 1:(length(y50_r26) - 1)) {
+  c5026 <- c5026 + (raster(y50_r26[j + 1]) == 0)
+  c5085 <- c5085 + (raster(y50_r85[j + 1]) == 0)
+  c10026 <- c10026 + (raster(y100_r26[j + 1]) == 0)
+  c10085 <- c10085 + (raster(y100_r85[j + 1]) == 0)
+  cpresent <- cpresent + (raster(present[j + 1]) == 0)
+  cat("\tsum", j, "of", (length(y50_r26) - 1), "\n")
+}
+
+#c5026 <- c5026 / length(y50_r26)
+#c5085 <- c5085 / length(y50_r26)
+#c10026 <- c10026 / length(y50_r26)
+#c10085 <- c10085 / length(y50_r26)
+#cpresent <- cpresent / length(y50_r26)
+
+writeRaster(c5026, filename = "MOP_sum/sum_shallow_MOP_5026.tif", format = "GTiff")
+writeRaster(c5085, filename = "MOP_sum/sum_shallow_MOP_5085.tif", format = "GTiff")
+writeRaster(c10026, filename = "MOP_sum/sum_shallow_MOP_10026.tif", format = "GTiff")
+writeRaster(c10085, filename = "MOP_sum/sum_shallow_MOP_10085.tif", format = "GTiff")
+writeRaster(cpresent, filename = "MOP_sum/sum_shallow_MOP_present.tif", format = "GTiff")
+
+```
+
+## References 
+
+```{r, eval=FALSE}
+1. Brandt, A. & Malyutina, M. V. The German–Russian deep-sea expedition KuramBio 
+(Kurile Kamchatka biodiversity studies) on board of the RV Sonne in 2012 following
+the footsteps of the legendary expeditions with RV Vityaz. Deep Sea Research Part II: 
+Topical Studies in Oceanography 111, 1–9 (2015).
+
+2.	Malyutina, M. V. & Brandt, A. Introduction to sojabio (sea of japan biodiversity 
+studies). Deep Sea Research Part II: Topical Studies in Oceanography 86–87, 1–9 (2013).
+
+3.	Brandt, A. & Malyutina, M. V. The German–Russian deep-sea expedition KuramBio 
+(Kurile Kamchatka biodiversity studies) on board of the RV Sonne in 2012 following
+the footsteps of the legendary expeditions with RV Vityaz. Deep Sea Research Part II:
+Topical Studies in Oceanography 111, 1–9 (2015).
+
+4.	Malyutina, M. V., Chernyshev, A. V. & Brandt, A. Introduction to the SokhoBio 
+(Sea of Okhotsk Biodiversity Studies) expedition 2015. Deep Sea Research Part II: 
+Topical Studies in Oceanography 154, 1–9 (2018).
+
+5.	Cobos, M. E., Jiménez, L., Nuñez-Penichet, C., Romero-Alvarez, D. & Simoes, M. 
+Sample data and training modules for cleaning biodiversity information. Biodiv. Inf.
+13, 49–50 (2018).
+
+6.	Aiello-Lammens, M. E., Boria, R. A., Radosavljevic, A., Vilela, B. & Anderson, R. P. 
+spThin: an R package for spatial thinning of species occurrence records for use in 
+ecological niche models. Ecography 38, 541–545 (2015).
+
+7.	Barve, N. et al. The crucial role of the accessible area in ecological niche modeling 
+and species distribution modeling. Ecol. Modell. 222, 1810–1819 (2011).
+
+8.	Peterson, A. T., Papeş, M. & Soberón, J. Rethinking receiver operating characteristic 
+analysis applications in ecological niche modeling. Ecol. Modell. 213, 63–72 (2008).
+
+9.	Anderson, R. P., Lew, D. & Peterson, A. T. Evaluating predictive models of species’ 
+distributions: criteria for selecting optimal models. Ecol. Modell. 162, 211–232 (2003).
+
+10.	Warren, D. L. & Seifert, S. N. Ecological niche modeling in Maxent: the importance of 
+model complexity and the performance of model selection criteria. Ecol. Appl. 21, 335–342 
+(2011).
+
+11.	Owens, H. L. et al. Constraints on interpretation of ecological niche models by 
+limited environmental ranges on calibration areas. Ecol. Modell. 263, 10–18 (2013).
+
+12.	Alkishe, A. A., Peterson, A. T. & Samy, A. M. Climate change influences on the 
+potential geographic distribution of the disease vector tick Ixodes ricinus. PLoS ONE 
+12, e0189092 (2017).
+
+```
