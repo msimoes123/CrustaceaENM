@@ -6,7 +6,7 @@ A. Pre modeling: 1. Distribution data capture and cleaning from open-source data
 B. Modeling: 1. Creation of candidate models; 2. Evaluation of candidate models;  3. Selecting best model base don aic and ROC; 4. Creation of Final models; 5. Transforming final models to binary.
 
 C. Post modeling: 1. Projection changes; 2. Variance in model predictions; 3. Extrapolation analysis (MOP); 
-4. Binary MOPs;  5. Subtracting MOP from Final models (post-MOP models); 6. Calculating centroid shift; 7. MOPs summary 
+4. Binary MOPs;  5. Subtracting MOP from Final models (post-MOP models); 6. Calculating centroid shift; 7. MOPs summary;  7. Summarizing the contribution and permutation relevance of variable;  8. Summarizing the variability found in models (RCPs and Replicates);  9. Summarizing model changes 
  
 ## Pre-modeling: 
 
