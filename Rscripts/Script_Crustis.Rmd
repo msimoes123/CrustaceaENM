@@ -1271,6 +1271,74 @@ barplot(pideep4s, ylab = "Permutation importance", xlab = "Variables", ylim=c(0,
 barplot(pishallow4s, ylab = "Permutation importance", xlab = "Variables", ylim=c(0,60) )
 barplot(pishallow5s, ylab = "Permutation importance", xlab = "Variables", ylim=c(0,60))
 
+
+#Correlation Between Deepth and species richeness
+library(raster)
+r <- raster('D:\\Black_HD\\MODELS_Ready\\Sum_binary_reduced_2100_85\\Shallow.tif')
+e <- raster('D:\\Black_HD\\nw_shallow\\Variables\\set2\\2050_rcp85\\etoporst.asc')
+d <- rasterToPoints( e )
+v <- rasterToPoints( r )
+head(v)
+#write.csv(d, 'D:\\Review\\depth.csv')
+#d <- read.csv('D:\\Review\\depth.csv')
+write.csv(v, 'D:\\Review\\Shallow_2100_85.csv')
+v <- read.csv('D:\\Review\\Shallow_2100_85.csv')
+
+breaks <- seq(0,90, by=5)
+spvector<-unique(breaks)
+df1<-NULL
+i=1
+
+for (i in 1:length(spvector)) {
+  sub <-v[v$y  >= spvector[i],]
+  sub2 <-sub[sub$y <= spvector[i]+5,]
+  mean <- mean(sub2$Shallow) # Number of records
+  df1 = rbind(df1, data.frame(spvector[i],mean))
+}
+
+
+df_final6 <- cbind(df_final5, df1$mean)
+dim(df_final6)
+colnames(df_final6) <- c('lat', 'topo', 'Deep_2050_26', 'Shallow_2050_26', 'Deep_2050_85', 'shallow_2050_85', 'Deep_2100_26', 'Shallow_2100_26', 'Deep_2100_85', 'Shallow_2100_85')
+write.csv(df_final6, 'D:\\Review\\CorDepth_SpRichenss.csv')
+c <- read.csv('D:\\Review\\CorDepth_SpRichenss.csv')
+a <- c[,2:10]
+cor(a, method = 'pearson', use = 'pairwise.complete.obs')[1,-1]
+install.packages("ggpubr")
+library("ggpubr")
+ggscatter(c, x = "topo", y = "Deep_2050_26", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "pearson",
+          xlab = "Depth", ylab = "Species Richeness")
+ggscatter(c, x = "topo", y = "Shallow_2050_26", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "pearson",
+          xlab = "Depth", ylab = "Species Richeness")
+ggscatter(c, x = "topo", y = "Deep_2050_85", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "pearson",
+          xlab = "Depth", ylab = "Species Richeness")
+ggscatter(c, x = "topo", y = "shallow_2050_85", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "pearson",
+          xlab = "Depth", ylab = "Species Richeness")
+ggscatter(c, x = "topo", y = "Deep_2100_26", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "pearson",
+          xlab = "Depth", ylab = "Species Richeness")
+ggscatter(c, x = "topo", y = "Shallow_2100_26", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "pearson",
+          xlab = "Depth", ylab = "Species Richeness")
+ggscatter(c, x = "topo", y = "Deep_2100_85", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "pearson",
+          xlab = "Depth", ylab = "Species Richeness")
+ggscatter(c, x = "topo", y = "Shallow_2100_85", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "pearson",
+          xlab = "Depth", ylab = "Species Richeness")
+
 ```
 
 ## References 
