@@ -43,6 +43,9 @@ The post-modeling phase includes:
  4. Binary MOPs; 
  5. Subtracting MOP from Final models (post-MOP models);
  6. Calculating centroid shift
+ 7. Summarizing the contribution and permutation relevance of variables 
+ 8. Summarizing the variability found in models (RCPs and Replicates)
+ 9. Summarizing model changes 
  
  After iobtaining the final models, we performed map algebra to represent how and where models projected in time change compared to the current one (kuenm_projchanges).Moreover, we model variation was assessed and represented geographically following the amount of variance in model predictions that came from replicates and emission scenarios (RCPs). 
  
