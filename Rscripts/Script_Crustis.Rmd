@@ -638,8 +638,8 @@ bins_exc <- "binary_c.*on.tif$"
 bin_files_exc <- list.files(pattern = bins_exc, full.names = T, recursive = T)
 bin_files <- bin_files[!bin_files %in% bin_files_exc]
 
-ex <- seq(2, 360, 2) 
-ne <- seq(8, 360, 8)
+ex <- seq(2, 360, 2) #Number of bin_files 2 bcs of binary_ and binary_current
+ne <- seq(8, 360, 8) #Number of bin_files 8 bcs there are 8 fies from the same species and we only need one
 
 exs <- ex[!ex %in% ne]
 bin_files <- bin_files[-exs]
