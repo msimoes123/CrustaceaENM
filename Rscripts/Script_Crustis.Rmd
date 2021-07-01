@@ -1,5 +1,5 @@
 ---
-title: "Estimating the future shift patterns of shallow-water and deep-sea Crustacea"
+title: "Climate matching reveals non-uniform range-shift patterns in benthic marine Crustacea"
 author: 'Marianna V. P. Simões, Hanieh Saeedi, Marlon E. Cobos & Angelika Brandt '
 output: 
   pdf_document:
